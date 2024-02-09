@@ -37,7 +37,9 @@ On the monitored Microsoft Windows host, ensure the SNMP service has a known com
 
 # Output
 
-You will see output similar to the following:
+You will see output similar to one of the following messages:
 ```
 service OK - Print Spooler is running
+service WARN - BogusServiceName was not found, please verify BogusServiceName is a valid service name 
+service WARN - sysDescr indicates this is not a Windows machine, so cannot be checked for Windows Services: Linux ns1 5.14.0-350.el9.x86_64 #1 SMP PREEMPT_DYNAMIC
 ```
