@@ -28,9 +28,11 @@ define command{
 ```
 
 On the monitored Microsoft Windows host, ensure the SNMP service is installed and running
+
 <img src=images/snmp_service.png>
 
 On the monitored Microsoft Windows host, ensure the SNMP service has a known community string and allows incoming connections from at least the nagios server.
+
 <img src=images/snmp_security.png>
 
 # Output
