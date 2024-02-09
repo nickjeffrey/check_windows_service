@@ -1,0 +1,408 @@
+#!/usr/bin/perl -w
+#
+
+
+
+# DESCRIPTION
+# -----------
+#  This script is a nagios check that for Microsoft Windows Services (via SNMP)
+
+
+# OUTSTANDING TASKS
+# ----------------
+
+
+
+# CHANGE LOG
+# ----------
+#  2024/02081 	njeffrey 	Script created
+
+
+# NOTES
+# -----
+#
+#  This script should return one (and only one) line of ouput.  Multiple
+#  lines of output are silently ignored by nagios.
+#
+#  The line of output will become the body of the alert message sent by nagios
+#
+#
+#  You will need a section in the services.cfg
+#  file on the nagios server that looks similar to the following.
+#   # Parameters are SNMP community name and "Name of Service"
+#   define service{
+#           use                             generic-service
+#           host_name                       winserv1,winserv2
+#           service_description             service Blah Blah 
+#           check_command                   check_windows_service!public!"My Service Name"
+#           }
+#
+#  You will need a section in the commands.cfg
+#  file on the nagios server that looks similar to the following.
+#     # ---------------------------------------------------------------------------
+#     # 'check_windows_service' command definition for monitoring Microsoft Windows services via SNMP
+#     # parameters are -H hostname -C snmp_community --servicename="My Service Name"
+#     define command{
+#             command_name    check_windows_service
+#             command_line    $USER1$/check_windows_service -H $HOSTADDRESS$ -c $ARG1$ --servicename=$ARG2$
+#             }
+#
+#
+#
+
+
+use strict;					#enforce good coding practices
+use Getopt::Long;                       	#allow --long-switches to be used as parameters
+
+
+# declare variables
+my ($OK,$WARN,$CRITICAL,$UNKNOWN);
+my ($CHECK_NAME,$host,$community,$community_default);
+my (%services,$count,$key,$output_message,$sysdescr);
+my ($opt_c,$opt_h,$opt_v,$opt_H,$opt_n);
+my ($verbose,$oid,$session,$error,$result);
+my ($pingstatus,$servicename);
+my ($cmd,$snmpget,$snmpwalk);
+$community_default  = "public";			#use this value if user does not specify SNMP community string
+$CHECK_NAME         = "service";
+$verbose            = "no";			#yes/no flag for debugging
+$snmpget            = "/usr/bin/snmpget";	#location of binary
+$snmpwalk           = "/usr/bin/snmpwalk";	#location of binary
+
+
+#
+# Nagios return codes
+#
+$OK       = 0;
+$WARN     = 1;
+$CRITICAL = 2;
+$UNKNOWN  = 3;
+
+
+
+
+
+sub get_options {
+   #
+   # this gets the command line parameters provided by the users
+   print "running get_options subroutine \n" if ($verbose eq "yes");
+   #
+   Getopt::Long::Configure('bundling');
+   GetOptions(
+      "h"   => \$opt_h, "help"          => \$opt_h,
+      "v"   => \$opt_v, "verbose"       => \$opt_v,
+      "c=s" => \$opt_c, "community=s"   => \$opt_c, 
+      "H=s" => \$opt_H, "host=s"        => \$opt_H, 
+      "n=s" => \$opt_n, "servicename=s" => \$opt_n, 
+   );
+   #
+   # If the user did not supply a --community= value, use the default.
+   #
+   if( defined( $opt_c ) ) {
+      $community = $opt_c;
+   } else {
+      $community = $community_default;
+   }
+   #
+   # If the user did not supply a -H or --host== value, generate a warning.
+   #
+   if( defined( $opt_H ) ) {
+      $host = $opt_H;
+   } else {
+      print "$CHECK_NAME Unknown - cannot determine remote host.  Usage: $0 -H host -c community \n";
+      exit $UNKNOWN;				#exit script
+   }
+   #
+   # If the user did not supply a -H or --host== value, generate a warning.
+   #
+   if( defined( $opt_n ) ) {
+      $servicename = $opt_n;
+   } else {
+      print "$CHECK_NAME Unknown - cannot determine name of service to be checked.  Usage: $0 -H host -c community -n \"Name of service\" \n";
+      exit $UNKNOWN;				#exit script
+   }
+   #
+   # If the user supplied -v or --verbose switch, increase script output verbosity for debugging
+   if( defined( $opt_v ) ) {
+      $verbose = "yes";
+   }
+   print "   host=$host community=$community servicename=$servicename \n" if ($verbose eq "yes");
+}                       #end of subroutine
+
+
+
+
+sub sanity_checks {
+   #
+   print "running sanity_checks subroutine \n" if ($verbose eq "yes");
+   #
+   #
+   #
+   # Confirm required files exist 
+   # 
+   $snmpget = "/usr/local/bin/snmpget"   if ( -e "/usr/local/bin/snmpget" );
+   $snmpget = "/usr/bin/snmpget"          if ( -e "/usr/bin/snmpget" );
+   if ( ! -f "$snmpget" ) {
+      print "ERROR: Cannot find $snmpget \n";
+      exit;
+   }
+   if ( ! -x "$snmpget" ) {
+      print "ERROR: $snmpget is not executable by the current user\n";
+      exit;
+   }
+   $snmpwalk = "/usr/local/bin/snmpwalk"   if ( -e "/usr/local/bin/snmpget" );
+   $snmpwalk = "/usr/bin/snmpwalk"         if ( -e "/usr/bin/snmpget" );
+   if ( ! -f "$snmpwalk" ) {
+      print "ERROR: Cannot find $snmpwalk \n";
+      exit;
+   }
+   if ( ! -x "$snmpwalk" ) {
+      print "ERROR: $snmpwalk is not executable by the current user\n";
+      exit;
+   }
+   #
+   # confirm a remote host is defined
+   if( ! defined( $host ) ) {
+      print "$CHECK_NAME Unknown - missing name of remote host to check.  Use $0 -h for help\n";
+      exit $UNKNOWN;                                    #exit script
+   }
+}						#end of subroutine
+
+
+
+
+sub get_usage {
+   #
+   # this subroutine gets called if user enters -h or --help parameters
+   print "running get_usage subroutine \n" if ($verbose eq "yes");
+   #
+   if( $opt_h ) {
+      print "Nagios plugin for determining health of Brocade fibre switch \n";
+      print "$0 [options]  \n";
+      print "    where options are: \n";
+      print "    -c --community=SNMP_community_string     (default=public)\n";
+      print "    -h --help \n";
+      print "    -H --host=IP|hostname \n";
+      print "    -n --servicename=\"My Service Name\" \n";
+      print "\n\n";
+      exit;
+   }                                            #end of if block
+}						#end of subroutine
+
+
+
+
+sub ping_remote_host {
+   #
+   print "running ping_remote_host subroutine \n" if ($verbose eq "yes");
+   #
+   # Confirm the remote host is up
+   #
+   print "trying to ping $host \n" if ($verbose eq "yes");
+   open(IN,"ping -c 4 -w 4 $host 2>&1 |");         #send up to 4 pings and wait up to 4 seconds for reply
+   while (<IN>) {                                  #read a line from STDIN
+      if ( /100% packet loss/ ) {                  #check for ping timeouts (indicates host may be down)
+         $pingstatus = "$CHECK_NAME UNKNOWN -- no ping reply from $host \n";
+         print $pingstatus;                            #print error message
+         exit $UNKNOWN;                            #exit script
+      }                                            #end of if block
+      if ( /NOT FOUND/ ) {                         #check for invalid hostname (using AIX ping)
+         $pingstatus = "$CHECK_NAME UNKNOWN -- could not resolve hostname $host \n";
+         print $pingstatus;                            #print error message
+         exit $UNKNOWN;                            #exit script
+      }                                            #end of if block
+      if ( /unknown host/ ) {                      #check for invalid hostname (using Linux ping)
+         $pingstatus = "$CHECK_NAME UNKNOWN -- could not resolve hostname $host \n";
+         print $pingstatus;                            #print error message
+         exit $UNKNOWN;                            #exit script
+      }                                            #end of if block
+      if ( /no route to host/ ) {                  #check for routing problems
+         $pingstatus = "$CHECK_NAME UNKNOWN -- could not find a route to $host - check routing tables \n";
+         print $pingstatus;                            #print error message
+         exit $UNKNOWN;                            #exit script
+      }                                            #end of if block
+   }                                               #end of while loop
+   close IN;                                       #close filehandle
+}						#end of subroutine
+
+
+
+
+
+
+
+
+
+
+sub get_windows_version {
+   #
+   print "running get_windows_version subroutine \n" if ($verbose eq "yes");
+   #
+   # This subroutine will check the SNMPv2-MIB::sysDescr.0 OID to confirm this is a Windows machine.
+   # This is also a sanity check that cnrims the remote host has a listening SNMP daemon
+   #
+   # Sample output:
+   #   $ snmpget -Onq  -v 1 -c public nyxdc1 1.3.6.1.2.1.1.1.0
+   #   .1.3.6.1.2.1.1.1.0 Hardware: Intel64 Family 6 Model 86 Stepping 3 AT/AT COMPATIBLE - Software: Windows Version 6.3 (Build 17763 Multiprocessor Free)
+   #
+   #
+   #
+   $oid = ".1.3.6.1.2.1.1.1.0"; 
+   $cmd = "$snmpget -Onq -v 1 -c $community $host $oid 2>&1"; 		#define command to be run
+   print "   running command: $cmd \n" if ($verbose eq "yes");
+   open(IN,"$cmd |"); 							#open a filehandle for reading 
+   while (<IN>) {                          				#read a line from STDIN
+      if ( /$oid Hardware: .*(Windows.*)/ ) { 				#look for a response to the snmp query
+         $sysdescr = $1;						#assign more mnemonic variable name
+         print "$sysdescr \n" if ($verbose eq "yes");
+      } 								#end of if block
+   }									#end of while loop
+   close IN;								#close filehandle
+   unless ( $sysdescr =~ /Windows/ ) {
+      print "$CHECK_NAME CRITICAL - could not query $host via SNMP.  Confirm you have the correct SNMP community string and the remote host $host has a working SNMP daemon.\n";
+      exit $UNKNOWN;				#exit script 
+   }						#end of unless block
+}									#end of subroutine
+
+
+
+# Windows SNMP DATA
+#
+# my $win_serv_table = '1.3.6.1.4.1.77.1.2.3.1';      # Windows services table
+# my $win_serv_name  = '1.3.6.1.4.1.77.1.2.3.1.1';    # Name of the service
+#
+# # Install state : uninstalled(1), install-pending(2), uninstall-pending(3), installed(4)
+# my $win_serv_inst = '1.3.6.1.4.1.77.1.2.3.1.2';
+#
+# # Operating state : active(1),  continue-pending(2),  pause-pending(3),  paused(4)
+# my $win_serv_state = '1.3.6.1.4.1.77.1.2.3.1.3';
+# my %win_serv_state_label = (1 => 'active', 2 => 'continue-pending', 3 => 'pause-pending', 4 => 'paused');
+#
+# # Can be uninstalled : cannot-be-uninstalled(1), can-be-uninstalled(2)
+# my $win_serv_uninst = '1.3.6.1.4.1.77.1.2.3.1.4';
+#
+
+sub get_all_service_names {
+   #
+   print "running get_all_service_details subroutine \n" if ($verbose eq "yes");
+   #
+   # This portion of hte MIB tree contains all the service names
+   # We will do some fancy regex to strip out all the hard to read deep OID values
+   #
+   # snmpwalk -v 1 -c public myserver .1.3.6.1.4.1.77.1.2.3.1.1
+   # .1.3.6.1.4.1.77.1.2.3.1.1.5.80.111.119.101.114 "Power"
+   # .1.3.6.1.4.1.77.1.2.3.1.1.6.83.101.114.118.101.114 "Server"
+   # .1.3.6.1.4.1.77.1.2.3.1.1.6.84.104.101.109.101.115 "Themes"
+   # .1.3.6.1.4.1.77.1.2.3.1.1.7.83.121.115.77.97.105.110 "SysMain"
+   # .1.3.6.1.4.1.77.1.2.3.1.1.8.78.101.116.108.111.103.111.110 "Netlogon"
+   # .1.3.6.1.4.1.77.1.2.3.1.1.9.73.80.32.72.101.108.112.101.114 "IP Helper"
+   # .1.3.6.1.4.1.77.1.2.3.1.1.10.68.78.83.32.67.108.105.101.110.116 "DNS Client"
+   # .1.3.6.1.4.1.77.1.2.3.1.1.10.68.78.83.32.83.101.114.118.101.114 "DNS Server"
+   # .1.3.6.1.4.1.77.1.2.3.1.1.11.68.72.67.80.32.67.108.105.101.110.116 "DHCP Client"
+   # .1.3.6.1.4.1.77.1.2.3.1.1.11.84.105.109.101.32.66.114.111.107.101.114 "Time Broker"
+   #
+   #
+   #
+   $key = 1; 								#coutner variable that will be used as a unique hash key
+   $oid = ".1.3.6.1.4.1.77.1.2.3.1.1"; 
+   $cmd = "$snmpwalk -Onq -v 1 -c $community $host $oid 2>&1"; 					#define command to be run
+   print "   running command: $cmd \n" if ($verbose eq "yes");
+   open(IN,"$cmd |"); 							#open a filehandle for reading 
+   while (<IN>) {                          				#read a line from STDIN
+      s/"//g;								#get rid of quotation marks
+      if ( /$oid([0-9\.]+) (.*)/ ) { 					#look for a response to the snmp query
+         $services{$key}{oid} = $1;					#parse out the section of the OID that represents the service name
+         $services{$key}{name} = $2;					#parse out the hunam-readable service name
+         print "   OID:$oid $services{$key}{oid} Name:$services{$key}{name} \n" if ($verbose eq "yes");
+         $key++;							#increment counter
+      } 								#end of if block
+   }									#end of while loop
+   close IN;								#close filehandle
+}									#end of subroutine
+
+
+
+
+sub get_all_service_states {
+   #
+   print "running get_all_service_details subroutine \n" if ($verbose eq "yes");
+   #
+   # This portion of hte MIB tree contains all the service names
+   # We will do some fancy regex to strip out all the hard to read deep OID values
+   #
+   # snmpwalk -v 1 -c public myserver .1.3.6.1.4.1.77.1.2.3.1.3
+   # .1.3.6.1.4.1.77.1.2.3.1.3.5.80.111.119.101.114 1
+   # .1.3.6.1.4.1.77.1.2.3.1.3.6.83.101.114.118.101.114 1
+   # .1.3.6.1.4.1.77.1.2.3.1.3.6.84.104.101.109.101.115 1
+   # .1.3.6.1.4.1.77.1.2.3.1.3.7.83.121.115.77.97.105.110 1
+   # .1.3.6.1.4.1.77.1.2.3.1.3.8.78.101.116.108.111.103.111.110 1
+   # .1.3.6.1.4.1.77.1.2.3.1.3.9.73.80.32.72.101.108.112.101.114 1
+   # .1.3.6.1.4.1.77.1.2.3.1.3.10.68.78.83.32.67.108.105.101.110.116 1
+   # .1.3.6.1.4.1.77.1.2.3.1.3.10.68.78.83.32.83.101.114.118.101.114 1
+   # .1.3.6.1.4.1.77.1.2.3.1.3.11.68.72.67.80.32.67.108.105.101.110.116 1
+   # .1.3.6.1.4.1.77.1.2.3.1.3.11.84.105.109.101.32.66.114.111.107.101.114 1
+   #
+   #
+   $key = 1; 								#coutner variable that will be used as a unique hash key
+   $oid = ".1.3.6.1.4.1.77.1.2.3.1.3"; 
+   $cmd = "$snmpwalk -Onq -v 1 -c $community $host $oid 2>&1"; 					#define command to be run
+   print "   running command: $cmd \n" if ($verbose eq "yes");
+   open(IN,"$cmd |"); 							#open a filehandle for reading 
+   while (<IN>) {                          				#read a line from STDIN
+      s/"//g;								#get rid of quotation marks
+      if ( /$oid([0-9\.]+) ([0-9])/ ) { 				# Operating state : active(1),  continue-pending(2),  pause-pending(3),  paused(4)
+         $services{$key}{state} = $2;					#parse out the section of the OID that represents the service name
+         print "   Name:$services{$key}{name} State:$services{$key}{state} \n" if ($verbose eq "yes");
+         $key++;							#increment counter
+      } 								#end of if block
+   }									#end of while loop
+   close IN;								#close filehandle
+}									#end of subroutine
+
+
+
+
+
+
+
+
+
+
+
+
+sub print_output {
+   #
+   print "running print_output subroutine \n" if ($verbose eq "yes");
+   #
+   #
+   # build an output message that contains all the information
+   $output_message = "";
+   foreach $key (sort keys %services) {
+      if ( ($services{$key}{name} eq "$servicename") && ($services{$key}{state} == 1) ) {   	#find the service name
+         $output_message = "$services{$key}{name} is running \n";
+         print "   $output_message \n" if ($verbose eq "yes");
+         print "$CHECK_NAME OK - $output_message \n";
+         exit $OK;
+      }
+   } 						#end of foreach block
+   #
+   # we only get this far if everything is ok
+   print "$CHECK_NAME WARN - $servicename not running \n";
+   exit $WARN;
+}						#end of subroutine
+
+
+
+
+
+
+# ----------------------- main body of program -------------------------------
+get_options;
+sanity_checks;
+get_usage;
+ping_remote_host;
+get_windows_version;
+get_all_service_names;
+get_all_service_states;
+print_output;
+
