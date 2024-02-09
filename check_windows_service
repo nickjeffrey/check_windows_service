@@ -58,7 +58,7 @@ use Getopt::Long;                       	#allow --long-switches to be used as pa
 # declare variables
 my ($OK,$WARN,$CRITICAL,$UNKNOWN);
 my ($CHECK_NAME,$host,$community,$community_default);
-my (%services,$count,$key,$output_message,$sysdescr);
+my (%services,$count,$key,$output_message,$perf_data,$sysdescr);
 my ($opt_c,$opt_h,$opt_v,$opt_H,$opt_n);
 my ($verbose,$oid,$session,$error,$result);
 my ($pingstatus,$servicename);
@@ -377,17 +377,19 @@ sub print_output {
    #
    # build an output message that contains all the information
    $output_message = "";
+   $perf_data = "running=0;;;;";
    foreach $key (sort keys %services) {
       if ( ($services{$key}{name} eq "$servicename") && ($services{$key}{state} == 1) ) {   	#find the service name
-         $output_message = "$services{$key}{name} is running \n";
-         print "   $output_message \n" if ($verbose eq "yes");
-         print "$CHECK_NAME OK - $output_message \n";
+         $output_message = "$services{$key}{name} is running";
+         $perf_data = "running=1;;;;";
+         print "   $output_message | $perf_data \n" if ($verbose eq "yes");
+         print "$CHECK_NAME OK - $output_message | $perf_data \n";
          exit $OK;
       }
    } 						#end of foreach block
    #
    # we only get this far if everything is ok
-   print "$CHECK_NAME WARN - $servicename not running \n";
+   print "$CHECK_NAME WARN - $servicename not running | $perf_data \n";
    exit $WARN;
 }						#end of subroutine
 
