@@ -15,7 +15,8 @@
 
 # CHANGE LOG
 # ----------
-#  2024/02081 	njeffrey 	Script created
+#  2024/02/08 	njeffrey 	Script created
+#  2024/02/09 	njeffrey 	Add error-checks
 
 
 # NOTES
@@ -110,7 +111,7 @@ sub get_options {
       $host = $opt_H;
    } else {
       print "$CHECK_NAME Unknown - cannot determine remote host.  Usage: $0 -H host -c community \n";
-      exit $UNKNOWN;				#exit script
+      exit $UNKNOWN;					#exit script
    }
    #
    # If the user did not supply a -H or --host== value, generate a warning.
@@ -119,7 +120,7 @@ sub get_options {
       $servicename = $opt_n;
    } else {
       print "$CHECK_NAME Unknown - cannot determine name of service to be checked.  Usage: $0 -H host -c community -n \"Name of service\" \n";
-      exit $UNKNOWN;				#exit script
+      exit $UNKNOWN;					#exit script
    }
    #
    # If the user supplied -v or --verbose switch, increase script output verbosity for debugging
@@ -127,7 +128,7 @@ sub get_options {
       $verbose = "yes";
    }
    print "   host=$host community=$community servicename=$servicename \n" if ($verbose eq "yes");
-}                       #end of subroutine
+}                       				#end of subroutine
 
 
 
@@ -166,7 +167,7 @@ sub sanity_checks {
       print "$CHECK_NAME Unknown - missing name of remote host to check.  Use $0 -h for help\n";
       exit $UNKNOWN;                                    #exit script
    }
-}						#end of subroutine
+}							#end of subroutine
 
 
 
@@ -186,8 +187,8 @@ sub get_usage {
       print "    -n --servicename=\"My Service Name\" \n";
       print "\n\n";
       exit;
-   }                                            #end of if block
-}						#end of subroutine
+   }                                            	#end of if block
+}							#end of subroutine
 
 
 
@@ -199,31 +200,31 @@ sub ping_remote_host {
    # Confirm the remote host is up
    #
    print "trying to ping $host \n" if ($verbose eq "yes");
-   open(IN,"ping -c 4 -w 4 $host 2>&1 |");         #send up to 4 pings and wait up to 4 seconds for reply
-   while (<IN>) {                                  #read a line from STDIN
-      if ( /100% packet loss/ ) {                  #check for ping timeouts (indicates host may be down)
+   open(IN,"ping -c 4 -w 4 $host 2>&1 |");         	#send up to 4 pings and wait up to 4 seconds for reply
+   while (<IN>) {                                  	#read a line from STDIN
+      if ( /100% packet loss/ ) {                  	#check for ping timeouts (indicates host may be down)
          $pingstatus = "$CHECK_NAME UNKNOWN -- no ping reply from $host \n";
-         print $pingstatus;                            #print error message
-         exit $UNKNOWN;                            #exit script
-      }                                            #end of if block
-      if ( /NOT FOUND/ ) {                         #check for invalid hostname (using AIX ping)
+         print $pingstatus;                            	#print error message
+         exit $UNKNOWN;                            	#exit script
+      }                                            	#end of if block
+      if ( /NOT FOUND/ ) {                         	#check for invalid hostname (using AIX ping)
          $pingstatus = "$CHECK_NAME UNKNOWN -- could not resolve hostname $host \n";
-         print $pingstatus;                            #print error message
-         exit $UNKNOWN;                            #exit script
-      }                                            #end of if block
-      if ( /unknown host/ ) {                      #check for invalid hostname (using Linux ping)
+         print $pingstatus;                            	#print error message
+         exit $UNKNOWN;                            	#exit script
+      }                                            	#end of if block
+      if ( /unknown host/ ) {                      	#check for invalid hostname (using Linux ping)
          $pingstatus = "$CHECK_NAME UNKNOWN -- could not resolve hostname $host \n";
-         print $pingstatus;                            #print error message
-         exit $UNKNOWN;                            #exit script
-      }                                            #end of if block
-      if ( /no route to host/ ) {                  #check for routing problems
+         print $pingstatus;                            	#print error message
+         exit $UNKNOWN;                            	#exit script
+      }                                            	#end of if block
+      if ( /no route to host/ ) {                  	#check for routing problems
          $pingstatus = "$CHECK_NAME UNKNOWN -- could not find a route to $host - check routing tables \n";
-         print $pingstatus;                            #print error message
-         exit $UNKNOWN;                            #exit script
-      }                                            #end of if block
-   }                                               #end of while loop
-   close IN;                                       #close filehandle
-}						#end of subroutine
+         print $pingstatus;                            	#print error message
+         exit $UNKNOWN;                            	#exit script
+      }                                            	#end of if block
+   }                                               	#end of while loop
+   close IN;                                       	#close filehandle
+}							#end of subroutine
 
 
 
@@ -241,27 +242,44 @@ sub get_windows_version {
    # This subroutine will check the SNMPv2-MIB::sysDescr.0 OID to confirm this is a Windows machine.
    # This is also a sanity check that cnrims the remote host has a listening SNMP daemon
    #
-   # Sample output:
+   # Sample output showing system description for various devices.
    #   $ snmpget -Onq  -v 1 -c public nyxdc1 1.3.6.1.2.1.1.1.0
    #   .1.3.6.1.2.1.1.1.0 Hardware: Intel64 Family 6 Model 86 Stepping 3 AT/AT COMPATIBLE - Software: Windows Version 6.3 (Build 17763 Multiprocessor Free)
+   #   .1.3.6.1.2.1.1.1.0 Linux ns1 5.14.0-350.el9.x86_64 #1 SMP PREEMPT_DYNAMIC Fri Aug 4 12:40:09 UTC 2023 x86_64
+   #   .1.3.6.1.2.1.1.1.0 Cisco Catalyst Internetwork Operating System Software
+   #   .1.3.6.1.2.1.1.1.0 HP ETHERNET MULTI-ENVIRONMENT
+   #   .1.3.6.1.2.1.1.1.0 pfSense firewall.example.com 2.7.2-RELEASE FreeBSD 14.0-CURRENT amd64
    #
    #
    #
-   $oid = ".1.3.6.1.2.1.1.1.0"; 
+   #
+   #
+   #
+   #
+   $sysdescr = "";                                                      #initialize variable to avoid undef errors
+   $oid = ".1.3.6.1.2.1.1.1.0"; 					#SNMP OID for SNMPv2-MIB::sysDescr.0
    $cmd = "$snmpget -Onq -v 1 -c $community $host $oid 2>&1"; 		#define command to be run
    print "   running command: $cmd \n" if ($verbose eq "yes");
    open(IN,"$cmd |"); 							#open a filehandle for reading 
    while (<IN>) {                          				#read a line from STDIN
-      if ( /$oid Hardware: .*(Windows.*)/ ) { 				#look for a response to the snmp query
+      if ( /$oid (.*)/ ) { 							#confirm the OID is returned,
          $sysdescr = $1;						#assign more mnemonic variable name
-         print "$sysdescr \n" if ($verbose eq "yes");
+         if ($sysdescr =~ /Windows/) {					#
+            print "   Found Windows device: $sysdescr \n" if ($verbose eq "yes");
+         } else {
+            print "   Found non-Windows device: $sysdescr \n" if ($verbose eq "yes");
+            print "$CHECK_NAME WARN - sysDescr indicates this is not a Windows machine, so cannot be checked for Windows Services: $sysdescr \n";
+            exit $WARN;							#exit script 
+         } 								#end of unless block
       } 								#end of if block
+    
    }									#end of while loop
    close IN;								#close filehandle
+   # We should only get this far if there was no SNMP response at all
    unless ( $sysdescr =~ /Windows/ ) {
-      print "$CHECK_NAME CRITICAL - could not query $host via SNMP.  Confirm you have the correct SNMP community string and the remote host $host has a working SNMP daemon.\n";
-      exit $UNKNOWN;				#exit script 
-   }						#end of unless block
+      print "$CHECK_NAME WARN - could not query $host via SNMP.  Confirm you have the correct SNMP community string and the remote host $host has a working SNMP daemon.\n";
+      exit $WARN;							#exit script 
+   }									#end of unless block
 }									#end of subroutine
 
 
@@ -305,7 +323,7 @@ sub get_all_service_names {
    #
    $key = 1; 								#coutner variable that will be used as a unique hash key
    $oid = ".1.3.6.1.4.1.77.1.2.3.1.1"; 
-   $cmd = "$snmpwalk -Onq -v 1 -c $community $host $oid 2>&1"; 					#define command to be run
+   $cmd = "$snmpwalk -Onq -v 1 -c $community $host $oid 2>&1"; 		#define command to be run
    print "   running command: $cmd \n" if ($verbose eq "yes");
    open(IN,"$cmd |"); 							#open a filehandle for reading 
    while (<IN>) {                          				#read a line from STDIN
@@ -344,8 +362,8 @@ sub get_all_service_states {
    #
    #
    $key = 1; 								#coutner variable that will be used as a unique hash key
-   $oid = ".1.3.6.1.4.1.77.1.2.3.1.3"; 
-   $cmd = "$snmpwalk -Onq -v 1 -c $community $host $oid 2>&1"; 					#define command to be run
+   $oid = ".1.3.6.1.4.1.77.1.2.3.1.3"; 					#SNMP OID for the state of each service
+   $cmd = "$snmpwalk -Onq -v 1 -c $community $host $oid 2>&1"; 		#define command to be run
    print "   running command: $cmd \n" if ($verbose eq "yes");
    open(IN,"$cmd |"); 							#open a filehandle for reading 
    while (<IN>) {                          				#read a line from STDIN
@@ -379,6 +397,8 @@ sub print_output {
    $output_message = "";
    $perf_data = "running=0;;;;";
    foreach $key (sort keys %services) {
+      next unless ($services{$key}{name});
+      next unless ($services{$key}{state});
       if ( ($services{$key}{name} eq "$servicename") && ($services{$key}{state} == 1) ) {   	#find the service name
          $output_message = "$services{$key}{name} is running";
          $perf_data = "running=1;;;;";
@@ -386,10 +406,17 @@ sub print_output {
          print "$CHECK_NAME OK - $output_message | $perf_data \n";
          exit $OK;
       }
+      if ( ($services{$key}{name} eq "$servicename") && ($services{$key}{state} >  1) ) {   	#find the service name
+         $output_message = "$services{$key}{name} exists but is not running";
+         $perf_data = "running=1;;;;";
+         print "   $output_message | $perf_data \n" if ($verbose eq "yes");
+         print "$CHECK_NAME WARN - $output_message | $perf_data \n";
+         exit $WARN;
+      }
    } 						#end of foreach block
    #
-   # we only get this far if everything is ok
-   print "$CHECK_NAME WARN - $servicename not running | $perf_data \n";
+   # we only get this far if the servicename was not found on the remote machine
+   print "$CHECK_NAME WARN - $servicename was not found, please verify $servicename is a valid service name | $perf_data \n";
    exit $WARN;
 }						#end of subroutine
 
